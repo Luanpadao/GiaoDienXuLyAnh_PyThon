@@ -18,6 +18,7 @@ import snap7.client
 from pyzbar import pyzbar
 import time
 from PyQt5.QtSql import QSqlDatabase, QSqlQuery
+import mysql.connector
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -316,14 +317,29 @@ class Ui_MainWindow(object):
         self.label_3.setText(_translate("MainWindow", "DATA ON PLC :"))
         self.label_6.setText(_translate("MainWindow", "DATA SCANED :"))
         # ---------------------------------------------------------------------BẮT ĐẦU----------------------------------------------------------------
-        self.ip_plc.setText('192.168.1.13')
+        self.ip_plc.setText('192.168.1.15')
         self.bt_off.setVisible(False)
         self.bt_disconnect.setVisible(False)
         self.value_threshold.setText(str(self.slider_threshold.value()))
         self.sw_manual.setStyleSheet("background-color: blue")
         self.bt_scan.setVisible(True)
         self.mode = 0
+        self.bt_scan.setDisabled(True)
+        self.sw_auto.setDisabled(True)
+        self.sw_manual.setDisabled(True)
         self.thread = {}
+        # Thiết lập kết nối tới csdl MySQL
+        self.mydb = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="012321323Vn",
+            database="python_project_1"
+        )
+        # Kiểm tra kết nối
+        if self.mydb.is_connected():
+            print("Kết nối thành công tới mysql!")
+        else:
+            print("Kết nối không thành công!")
         # Lấy danh sách thiết bị camera
         self.get_camera_list()
         # Kết nối sự kiện click của nút "on" với hàm xử lý
@@ -340,12 +356,13 @@ class Ui_MainWindow(object):
     def event_scan(self):
         self.read_qr_code(self.img_origin)
     def change_mode(self,value):
-        if value == 0:
+        if value == 0:          #manual
             self.sw_manual.setStyleSheet("background-color: blue")
             self.sw_auto.setStyleSheet("background-color:#c1c1c1")
             self.bt_scan.setVisible(True)
+            self.lb_xla.clear()
             self.mode = 0
-        else:
+        else:                   #auto               
             self.sw_auto.setStyleSheet("background-color: blue")
             self.sw_manual.setStyleSheet("background-color:#c1c1c1")
             self.bt_scan.setVisible(False)
@@ -382,12 +399,14 @@ class Ui_MainWindow(object):
         self.bt_on.setVisible(False)
         self.bt_off.setVisible(True)
         self.camera.setDisabled(True)
+        self.bt_scan.setDisabled(False)
+        self.sw_auto.setDisabled(False)
+        self.sw_manual.setDisabled(False)
         self.start_capture_video()
 
     def start_capture_video(self):
         self.thread[1] = capture_video(index=1)
         self.thread[1].start()
-        # self.show_messenger_box()
         self.thread[1].signal.connect(self.show_webcam)
     def closeEvent(self, event):
         self.stop_capture_video()
@@ -399,58 +418,46 @@ class Ui_MainWindow(object):
         self.lb_xla.clear()
     def show_webcam(self,img):
         """Updates the image_label with a new opencv image"""
-        self.img_origin = self.convert_cv_qt(img)
-        if self.mode == 1:
-            self.show_xla(self.convert_cv_qt(img))
-
-    # def show_messenger_box(self):
-    #     # Tạo một MessageBox
-    #     msg_box = QMessageBox()
-    #     msg_box.setText("Đây là nội dung của MessageBox.")
-    #     msg_box.setWindowTitle("Messenger Box")
-    #     msg_box.setIcon(QMessageBox.Information)
-    #     # Hiển thị MessageBox
-    #     msg_box.exec_()
-
-    def show_xla(self,img):
-        # self.lb_xla.setPixmap(self.convert_gray(img))
-        self.read_qr_code(img)
-
-    #------------------------------------------------------------Xử lý ảnh----------------------------------------------------------------
-    def convert_cv_qt(self, cv_img):
-        # """Convert from an opencv image to QPixmap"""
-        rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        rgb_image = self.convert_cv_qt(img)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         convert_to_Qt_format = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
         p = convert_to_Qt_format.scaled(400, 300, QtCore.Qt.KeepAspectRatio)
         qt_img = QtGui.QPixmap.fromImage(p)
         self.lb_origin.setPixmap(qt_img)
-        return rgb_image
+        self.show_xla(rgb_image)
+
+    def show_xla(self,img):
+        # img = self.convert_hsv(img)
+        img = self.convert_gray(img)
+        img = self.convert_to_binary(img,self.slider_threshold.value())
+        img = self.read_qr_code(img)
+        if self.mode == 1:
+            if (img.ndim == 2):
+                h, w = img.shape
+                bytes_per_line = w
+            else:
+                h, w, ch = img.shape
+                bytes_per_line = ch * w
+            convert_to_Qt_format = QtGui.QImage(img.data, w, h, bytes_per_line, QtGui.QImage.Format_Grayscale8)
+            p = convert_to_Qt_format.scaled(400, 300, QtCore.Qt.KeepAspectRatio)
+            qrcode_img = QtGui.QPixmap.fromImage(p)
+            self.lb_xla.setPixmap(qrcode_img)
+
+    #------------------------------------------------------------Xử lý ảnh----------------------------------------------------------------
+    def convert_cv_qt(self, cv_img):
+        return cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
 
     def convert_hsv(self,img):
-        hsv = cv2.cvtColor(img,cv2.COLOR_RGB2HSV)
-        h, w, ch = hsv.shape
-        bytes_per_line = ch * w
-        convert_to_Qt_format = QtGui.QImage(hsv.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-        return convert_to_Qt_format
+        return cv2.cvtColor(img,cv2.COLOR_RGB2HSV)
     
     def convert_gray(self,img):
-        gray = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
-        if gray.ndim == 2:
-            # Grayscale image
-            h, w = gray.shape
-            bytes_per_line = w
-            convert_to_Qt_format = QtGui.QImage(gray.data, w, h, bytes_per_line, QtGui.QImage.Format_Grayscale8)
-        else:
-            # Colored image
-            h, w, ch = gray.shape
-            bytes_per_line = ch * w
-            convert_to_Qt_format = QtGui.QImage(gray.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-        p = convert_to_Qt_format.scaled(400, 300, QtCore.Qt.KeepAspectRatio)
-        img_gray = QtGui.QPixmap.fromImage(p)
-        return img_gray
+        return cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
     
+    def convert_to_binary(self, img, threshold):
+        _, binary_image = cv2.threshold(img, threshold, 255, cv2.THRESH_BINARY)
+        return binary_image
+
     def read_qr_code(self,img):
         barcodes = pyzbar.decode(img)
         for barcode in barcodes:                #lấy thông tin từng barcode từ những barcodes
@@ -460,18 +467,12 @@ class Ui_MainWindow(object):
             barcodeType = barcode.type                              #kiểu barcode
             # text = "{} - {} ".format(barcodeData,barcodeType)       #tổng hợp thông tin từ barcode vào biến text
             text = barcodeData
-            qrCode = text
             print(text)                                             #in dữ liệu lấy được từ barcode lên terminal để xem
             self.label_5.setText(text)
             myOutput = text
             myColor = (255,255,0)
-            cv2.putText(img,myOutput,(x-10,y-10),cv2.FONT_HERSHEY_SIMPLEX,1,myColor,1)        #hiển thị chữ lên barcode trên ảnh
-        h, w, ch = img.shape
-        bytes_per_line = ch * w
-        convert_to_Qt_format = QtGui.QImage(img.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-        p = convert_to_Qt_format.scaled(400, 300, QtCore.Qt.KeepAspectRatio)
-        qrcode_img = QtGui.QPixmap.fromImage(p)
-        self.lb_xla.setPixmap(qrcode_img)
+            cv2.putText(img,myOutput,(x-10,y-10),cv2.FONT_HERSHEY_SIMPLEX,1,myColor,3)        #hiển thị chữ lên barcode trên ảnh
+        return img
 
     #------------------------------------------------------------Kết thúc xử lý ảnh----------------------------------------------------------------
     def __init__(self):
@@ -524,7 +525,6 @@ class read_plc(QtCore.QThread):
         self.index = index
         print("start threading", self.index)
         super(read_plc, self).__init__()
-
     def run(self):
         while True:
             bool = self.read_plc_variable(1,'bool',1,78,3)              #Tag bool (DB: 1, ofset: 78.3)
@@ -534,6 +534,14 @@ class read_plc(QtCore.QThread):
             print('Tag_bool: '+str(bool) +'\n'+'Tag_string: '+ string )
             print('------------------------')
             if(bool == True):
+                cursor = ui.mydb.cursor()
+                # SELECT
+                cursor.execute("SELECT * FROM pre_data")
+                # Lấy tất cả các dòng dữ liệu từ kết quả truy vấn
+                result = cursor.fetchall()
+                for row in result:
+                    column2_value = row[1]  # Cột 2 có chỉ số 1
+                cursor.close()
                 self.write_string_plc_variable(1,66,10,str(ui.label_5.text()))
                 self.write_bool(1,78,3,False)
             time.sleep(1)
